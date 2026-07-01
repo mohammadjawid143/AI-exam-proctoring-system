@@ -311,13 +311,14 @@ class ProctoringSystem:
             from audio_detection.noise_detector import NoiseDetector
 
             self.audio_detector = NoiseDetector(
-                sample_rate=16000,
+                sample_rate=48000,
                 frame_duration_ms=30,
                 vad_mode=2,
                 calibration_seconds=3,
                 warning_seconds=3,
                 speech_ratio_threshold=0.60,
                 min_volume_threshold=0.015,
+                device=9
             )
 
             self.last_audio_status = "Audio system ready"
