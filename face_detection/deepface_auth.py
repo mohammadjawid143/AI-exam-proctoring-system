@@ -35,9 +35,6 @@ class DeepFaceAuthenticator:
         self.face_threshold = face_threshold
         self.detector_backend = detector_backend
         self.model_name = model_name
-
-        # False is more stable for webcam frames.
-        # Liveness already checks whether a face exists.
         self.enforce_detection = enforce_detection
         self.align = align
         self.max_frame_side = max_frame_side
@@ -70,7 +67,7 @@ class DeepFaceAuthenticator:
 
     def _resize_max(self, frame):
         """
-        Resize a frame before DeepFace verification to improve speed.
+        Resize a frame before DeepFace verification.
         """
         if frame is None:
             return None
@@ -89,12 +86,9 @@ class DeepFaceAuthenticator:
         )
 
     def _make_result(self, status, verified, distance=None, threshold=None):
-<<<<<<< HEAD
-=======
         """
         Store and return identity verification result.
         """
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         self.identity_status = status
         self.identity_verified = verified
         self.identity_distance = distance
@@ -109,7 +103,7 @@ class DeepFaceAuthenticator:
 
     def verify_frame(self, frame):
         """
-        Compare the current camera frame with the registered student image.
+        Compare current webcam frame with registered student profile image.
         """
         if frame is None:
             return self._make_result(
@@ -171,7 +165,7 @@ class DeepFaceAuthenticator:
 
     def get_cached_result(self):
         """
-        Return latest identity result without running DeepFace again.
+        Return the latest identity result without running DeepFace again.
         """
         return {
             "status": self.identity_status,

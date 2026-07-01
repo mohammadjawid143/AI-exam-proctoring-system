@@ -29,14 +29,6 @@ class CNNLivenessDetector:
     - It does not verify student identity.
     - It uses MediaPipe FaceMesh for face landmarks and blink detection.
     - It uses the H5 CNN model only for Live/Spoof scoring.
-<<<<<<< HEAD
-=======
-
-    Important design decision:
-    The CNN model is treated carefully because small H5 liveness models can be
-    unstable. Borderline model scores are NOT marked as Spoof immediately.
-    They are shown as "Checking liveness" to avoid false Spoof warnings.
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
     """
 
     def __init__(
@@ -68,13 +60,8 @@ class CNNLivenessDetector:
         if not self.model_path.exists():
             raise FileNotFoundError(f"Liveness model not found: {self.model_path}")
 
-<<<<<<< HEAD
-=======
-        # Many small public H5 liveness models are over-sensitive.
-        # If ProctoringSystem passes 0.70, we cap the effective threshold at 0.60
-        # to reduce false Spoof on a real face. Clear spoof is still controlled by
-        # spoof_threshold below.
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
+        # Small H5 liveness models can be over-sensitive.
+        # We cap the effective threshold to reduce false Spoof detection.
         self.threshold = min(float(threshold), 0.60)
         self.original_threshold = float(threshold)
         self.spoof_threshold = float(spoof_threshold)
@@ -83,16 +70,12 @@ class CNNLivenessDetector:
         self.live_class_index = live_class_index
         self.padding = padding
 
-<<<<<<< HEAD
-=======
         # Blink challenge settings.
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         self.enable_blink_challenge = enable_blink_challenge
         self.blink_valid_seconds = blink_valid_seconds
         self.blink_challenge_interval_seconds = blink_challenge_interval_seconds
 
-        # Basic quality checks. These are intentionally relaxed to avoid false
-        # rejection on normal laptop webcams.
+        # Quality thresholds.
         self.min_face_area_ratio = min_face_area_ratio
         self.max_face_area_ratio = max_face_area_ratio
         self.max_face_area_change = max_face_area_change
@@ -117,10 +100,7 @@ class CNNLivenessDetector:
 
         self.input_size = self.get_model_input_size()
 
-<<<<<<< HEAD
-=======
-        # MediaPipe is used for landmarks and blink detection.
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
+        # MediaPipe is used for face landmarks and blink detection.
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             max_num_faces=2,
@@ -145,6 +125,9 @@ class CNNLivenessDetector:
         print("Blink challenge interval:", self.blink_challenge_interval_seconds)
 
     def find_model_path(self):
+        """
+        Find the liveness H5 model automatically.
+        """
         for path in POSSIBLE_MODEL_PATHS:
             if path.exists():
                 return path
@@ -152,6 +135,9 @@ class CNNLivenessDetector:
         return POSSIBLE_MODEL_PATHS[0]
 
     def get_model_input_size(self):
+        """
+        Read input size from the loaded Keras model.
+        """
         input_shape = self.model.input_shape
 
         if isinstance(input_shape, list):
@@ -160,9 +146,12 @@ class CNNLivenessDetector:
         if len(input_shape) != 4:
             return (150, 150)
 
+        # NHWC format: (None, H, W, C)
         if input_shape[1] not in (1, 3):
             height = input_shape[1]
             width = input_shape[2]
+
+        # NCHW format: (None, C, H, W)
         else:
             height = input_shape[2]
             width = input_shape[3]
@@ -173,28 +162,25 @@ class CNNLivenessDetector:
         return (int(width), int(height))
 
     def reset_blink(self):
-<<<<<<< HEAD
-=======
         """
-        Reset blink tracking only.
+        Reset blink state only.
         """
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         self.closed_frames = 0
         self.last_blink_time = 0.0
         self.next_blink_challenge_time = 0.0
 
     def reset_tracking_state(self):
-<<<<<<< HEAD
-=======
         """
-        Reset temporal liveness state.
+        Reset all temporal liveness state.
         """
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         self.reset_blink()
         self.last_face_area_ratio = None
         self.score_history.clear()
 
     def _landmark_to_point(self, landmark, frame_w, frame_h):
+        """
+        Convert MediaPipe normalized landmark to pixel point.
+        """
         x = int(landmark.x * frame_w)
         y = int(landmark.y * frame_h)
 
@@ -204,17 +190,9 @@ class CNNLivenessDetector:
         return np.array([x, y], dtype=np.int32)
 
     def _landmarks_to_square_bbox(self, landmarks, frame_w, frame_h):
-<<<<<<< HEAD
-=======
         """
-        Build a square face crop from face landmarks.
-
-        The previous liveness model was likely trained with square/legacy face
-        crops. A tight MediaPipe landmark box can make the model output Spoof.
-        This function expands the face crop and makes it square to better match
-        typical liveness training preprocessing.
+        Build a square padded face box from landmarks.
         """
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         points = [
             self._landmark_to_point(lm, frame_w, frame_h)
             for lm in landmarks
@@ -248,7 +226,6 @@ class CNNLivenessDetector:
 
         return (x1, y1, x2, y2), face_area_ratio
 
-<<<<<<< HEAD
     def _face_error(
         self,
         status,
@@ -259,6 +236,9 @@ class CNNLivenessDetector:
         landmarks=None,
         face_area_ratio=0.0
     ):
+        """
+        Build a standard face detection error dictionary.
+        """
         return {
             "ok": False,
             "status": status,
@@ -271,20 +251,13 @@ class CNNLivenessDetector:
         }
 
     def _detect_face_data(self, frame):
-        if frame is None:
-            self.reset_tracking_state()
-            return self._face_error("No frame", warning=True)
-
-=======
-    def _detect_face_data(self, frame):
         """
-        Detect face and return face crop, landmarks, and face metadata.
+        Detect face and return crop, landmarks, and metadata.
         """
         if frame is None:
             self.reset_tracking_state()
             return self._face_error("No frame", warning=True)
 
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         frame_h, frame_w = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(rgb)
@@ -359,31 +332,10 @@ class CNNLivenessDetector:
             "face_area_ratio": largest_face["area_ratio"]
         }
 
-    def _face_error(
-        self,
-        status,
-        warning=True,
-        face_count=0,
-        face_box=None,
-        face_crop=None,
-        landmarks=None,
-        face_area_ratio=0.0
-    ):
-        """
-        Build a face detection error dictionary.
-        """
-        return {
-            "ok": False,
-            "status": status,
-            "warning": warning,
-            "face_count": face_count,
-            "face_box": face_box,
-            "face_crop": face_crop,
-            "landmarks": landmarks,
-            "face_area_ratio": face_area_ratio
-        }
-
     def _check_face_quality(self, face_crop, face_area_ratio):
+        """
+        Check face size, blur, and lighting.
+        """
         if face_area_ratio < self.min_face_area_ratio:
             return False, "Face too small", False, None
 
@@ -412,6 +364,9 @@ class CNNLivenessDetector:
         return True, "Quality OK", False, quality
 
     def _preprocess_face(self, face_crop):
+        """
+        Prepare face crop for CNN model.
+        """
         image = cv2.resize(face_crop, self.input_size)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = image.astype("float32") / 255.0
@@ -419,6 +374,9 @@ class CNNLivenessDetector:
         return image
 
     def _predict_model(self, face_crop):
+        """
+        Run CNN model and return stable scores.
+        """
         face_input = self._preprocess_face(face_crop)
         prediction = self.model.predict(face_input, verbose=0)
 
@@ -467,6 +425,9 @@ class CNNLivenessDetector:
         )
 
     def _calculate_ear(self, landmarks, eye_points, frame_w, frame_h):
+        """
+        Calculate Eye Aspect Ratio.
+        """
         points = []
 
         for index in eye_points:
@@ -488,6 +449,9 @@ class CNNLivenessDetector:
         return float((vertical_1 + vertical_2) / (2.0 * horizontal))
 
     def _detect_blink(self, frame, landmarks):
+        """
+        Detect blink using EAR.
+        """
         frame_h, frame_w = frame.shape[:2]
 
         left_ear = self._calculate_ear(
@@ -527,6 +491,9 @@ class CNNLivenessDetector:
         return blink_now, ear, blink_valid
 
     def _check_face_change(self, face_area_ratio):
+        """
+        Reset blink when face size changes too much.
+        """
         if self.last_face_area_ratio is None:
             self.last_face_area_ratio = face_area_ratio
             return False
@@ -541,6 +508,9 @@ class CNNLivenessDetector:
         return False
 
     def _needs_blink_challenge(self, blink_valid):
+        """
+        Decide whether blink challenge is required.
+        """
         if not self.enable_blink_challenge:
             return False
 
@@ -574,6 +544,9 @@ class CNNLivenessDetector:
         quality=None,
         decision_reason=""
     ):
+        """
+        Build a standard liveness result dictionary.
+        """
         return {
             "is_live": is_live,
             "model_live": model_live,
@@ -596,6 +569,9 @@ class CNNLivenessDetector:
         }
 
     def predict(self, frame):
+        """
+        Main liveness detection function.
+        """
         face_data = self._detect_face_data(frame)
 
         if not face_data["ok"]:
@@ -675,11 +651,6 @@ class CNNLivenessDetector:
                 decision_reason="model_exception"
             )
 
-<<<<<<< HEAD
-=======
-        # Only mark Spoof when the model score is clearly low.
-        # Borderline scores are treated as Checking instead of Spoof.
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         if definite_spoof:
             self.reset_blink()
 
@@ -768,12 +739,9 @@ class CNNLivenessDetector:
         )
 
     def draw_result(self, frame, result):
-<<<<<<< HEAD
-=======
         """
         Draw liveness result on a frame.
         """
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         face_box = result.get("face_box")
 
         if result.get("is_live"):
@@ -830,8 +798,4 @@ class CNNLivenessDetector:
             cv2.LINE_AA
         )
 
-<<<<<<< HEAD
         return frame
-=======
-        return frame
->>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
