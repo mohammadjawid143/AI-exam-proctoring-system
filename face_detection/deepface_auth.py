@@ -14,13 +14,20 @@ DETECTOR_BACKEND = "opencv"
 
 
 class DeepFaceAuthenticator:
+    """
+    Student identity verification only.
+
+    This class does NOT perform liveness detection.
+    Liveness is handled separately by CNNLivenessDetector.
+    """
+
     def __init__(
         self,
         student_id,
         face_threshold=0.55,
         detector_backend=DETECTOR_BACKEND,
         model_name=MODEL_NAME,
-        enforce_detection=True,
+        enforce_detection=False,
         align=True,
         max_frame_side=640
     ):
@@ -28,6 +35,9 @@ class DeepFaceAuthenticator:
         self.face_threshold = face_threshold
         self.detector_backend = detector_backend
         self.model_name = model_name
+
+        # False is more stable for webcam frames.
+        # Liveness already checks whether a face exists.
         self.enforce_detection = enforce_detection
         self.align = align
         self.max_frame_side = max_frame_side
@@ -56,8 +66,12 @@ class DeepFaceAuthenticator:
         print(f"Using face model: {self.model_name}")
         print(f"Using detector: {self.detector_backend}")
         print(f"Face threshold: {self.face_threshold}")
+        print(f"DeepFace enforce_detection: {self.enforce_detection}")
 
     def _resize_max(self, frame):
+        """
+        Resize a frame before DeepFace verification to improve speed.
+        """
         if frame is None:
             return None
 
@@ -74,22 +88,31 @@ class DeepFaceAuthenticator:
             interpolation=cv2.INTER_LINEAR
         )
 
-    def _make_error_result(self, message):
-        self.identity_verified = False
-        self.identity_status = message
-        self.identity_distance = None
-        self.identity_threshold = self.face_threshold
+    def _make_result(self, status, verified, distance=None, threshold=None):
+        """
+        Store and return identity verification result.
+        """
+        self.identity_status = status
+        self.identity_verified = verified
+        self.identity_distance = distance
+        self.identity_threshold = threshold if threshold is not None else self.face_threshold
 
         return {
             "status": self.identity_status,
-            "verified": False,
-            "distance": None,
+            "verified": self.identity_verified,
+            "distance": self.identity_distance,
             "threshold": self.identity_threshold
         }
 
     def verify_frame(self, frame):
+        """
+        Compare the current camera frame with the registered student image.
+        """
         if frame is None:
-            return self._make_error_result("Face Verification Error: empty frame")
+            return self._make_result(
+                status="Face Verification Error: empty frame",
+                verified=False
+            )
 
         try:
             frame_for_verify = self._resize_max(frame)
@@ -130,24 +153,23 @@ class DeepFaceAuthenticator:
             else:
                 status = "Unknown Person"
 
-            self.identity_verified = verified
-            self.identity_status = status
-            self.identity_distance = distance
-            self.identity_threshold = threshold
-
-            return {
-                "status": status,
-                "verified": verified,
-                "distance": distance,
-                "threshold": threshold
-            }
+            return self._make_result(
+                status=status,
+                verified=verified,
+                distance=distance,
+                threshold=threshold
+            )
 
         except Exception as error:
-            return self._make_error_result(
-                f"Face Verification Error: {str(error)}"
+            return self._make_result(
+                status=f"Face Verification Error: {str(error)}",
+                verified=False
             )
 
     def get_cached_result(self):
+        """
+        Return latest identity result without running DeepFace again.
+        """
         return {
             "status": self.identity_status,
             "verified": self.identity_verified,
@@ -156,6 +178,9 @@ class DeepFaceAuthenticator:
         }
 
     def reset(self):
+        """
+        Reset cached identity state.
+        """
         self.identity_verified = False
         self.identity_status = "Face not checked"
         self.identity_distance = None
