@@ -305,6 +305,7 @@ class ProctoringSystem:
 
     def _init_audio_detection(self):
         if not self.enable_audio:
+            self.last_audio_status = "Audio disabled"
             return
 
         try:
@@ -330,13 +331,12 @@ class ProctoringSystem:
             )
 
         except Exception as error:
-            self.enable_audio = False
             self.audio_detector = None
-            self.last_audio_status = "Audio system error"
+            self.last_audio_status = f"Audio init error: {error}"
 
             self.log_alert(
                 "AUDIO_SYSTEM_ERROR",
-                f"Audio disabled: {error}"
+                f"Audio init error: {error}"
             )
 
     def _init_workers(self):

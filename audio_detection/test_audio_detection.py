@@ -5,18 +5,20 @@ from audio_detection.noise_detector import NoiseDetector
 
 def run_audio_detection_test():
     detector = NoiseDetector(
-        sample_rate=16000,
+        sample_rate=48000,
         frame_duration_ms=30,
         vad_mode=2,
         calibration_seconds=3,
         warning_seconds=3,
         speech_ratio_threshold=0.60,
-        min_volume_threshold=0.015
+        min_volume_threshold=0.015,
+        device=9
     )
 
     detector.start()
 
     print("Audio detection test started.")
+    print("Device: 9 Microphone Realtek WASAPI")
     print("Please stay silent for first 3 seconds for calibration.")
     print("Then speak near the microphone.")
     print("Press Ctrl + C to stop.")
@@ -27,6 +29,7 @@ def run_audio_detection_test():
 
             print(
                 f"Status: {result['status']} | "
+                f"Running: {result['running']} | "
                 f"Volume: {result['volume']:.4f} | "
                 f"dB: {result['db']:.2f} | "
                 f"Warning: {result['warning']} | "

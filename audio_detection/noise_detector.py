@@ -10,25 +10,21 @@ import webrtcvad
 class NoiseDetector:
     def __init__(
         self,
-        sample_rate=16000,
+        sample_rate=48000,
         frame_duration_ms=30,
         vad_mode=2,
         calibration_seconds=3,
         warning_seconds=2.5,
         speech_ratio_threshold=0.55,
-        min_volume_threshold=0.015
+        min_volume_threshold=0.015,
+        device=None
     ):
         self.sample_rate = sample_rate
         self.frame_duration_ms = frame_duration_ms
+        self.device = device
 
-        # 30ms at 16000 Hz = 480 samples
         self.block_size = int(self.sample_rate * self.frame_duration_ms / 1000)
 
-        # VAD mode:
-        # 0 = less aggressive
-        # 1 = normal
-        # 2 = better for normal environment
-        # 3 = very aggressive, may miss quiet speech
         self.vad = webrtcvad.Vad(vad_mode)
 
         self.calibration_seconds = calibration_seconds
@@ -64,6 +60,21 @@ class NoiseDetector:
         db = 20 * np.log10(volume + 1e-6)
         return volume, db
 
+    def _reset_state(self):
+        self.background_samples = []
+        self.calibrated = False
+        self.calibration_start_time = None
+        self.adaptive_volume_threshold = self.min_volume_threshold
+
+        self.speech_frames.clear()
+        self.speech_start_time = None
+
+        self.current_volume = 0.0
+        self.current_db = -100.0
+
+        self.warning = False
+        self.status = "Audio not started"
+
     def _calibrate(self, volume):
         if self.calibration_start_time is None:
             self.calibration_start_time = time.time()
@@ -90,15 +101,12 @@ class NoiseDetector:
             print("Adaptive threshold:", self.adaptive_volume_threshold)
 
     def audio_callback(self, indata, frames, time_info, status):
-        if status:
-            pass
-
         audio_float = indata[:, 0].astype(np.float32)
 
         volume, db = self._calculate_volume(audio_float)
-        pcm_bytes = self._float_to_pcm16(audio_float)
 
         try:
+            pcm_bytes = self._float_to_pcm16(audio_float)
             is_speech = self.vad.is_speech(pcm_bytes, self.sample_rate)
         except Exception:
             is_speech = False
@@ -113,10 +121,7 @@ class NoiseDetector:
                 self.status = "Calibrating audio... keep silent"
                 return
 
-            # Ignore very small sounds
             volume_is_enough = volume >= self.adaptive_volume_threshold
-
-            # Save speech history
             self.speech_frames.append(is_speech and volume_is_enough)
 
             if len(self.speech_frames) == 0:
@@ -150,7 +155,10 @@ class NoiseDetector:
 
     def start(self):
         try:
+            self._reset_state()
+
             self.stream = sd.InputStream(
+                device=self.device,
                 channels=1,
                 samplerate=self.sample_rate,
                 blocksize=self.block_size,
@@ -159,10 +167,13 @@ class NoiseDetector:
             )
 
             self.stream.start()
+
             self.running = True
             self.status = "Calibrating audio... keep silent"
 
             print("Audio monitoring started.")
+            print("Audio device:", self.device)
+            print("Sample rate:", self.sample_rate)
             print("Please stay silent for calibration...")
 
         except Exception as error:
@@ -177,6 +188,7 @@ class NoiseDetector:
             if self.stream is not None:
                 self.stream.stop()
                 self.stream.close()
+                self.stream = None
 
             self.running = False
             self.status = "Audio monitoring stopped"
