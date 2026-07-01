@@ -6,6 +6,7 @@ from face_detection.cnn_liveness_detector import CNNLivenessDetector
 
 class LivenessTestRunner:
     """
+<<<<<<< HEAD
     Standalone webcam test for CNNLivenessDetector.
 
     Keys:
@@ -14,6 +15,16 @@ class LivenessTestRunner:
     p = reverse prediction meaning
     + = increase threshold
     - = decrease threshold
+=======
+    Standalone webcam test for the shared CNNLivenessDetector.
+
+    Keys:
+    - q: quit
+    - b: reset blink state
+    - p: reverse sigmoid meaning if your model output is inverted
+    - +: increase threshold
+    - -: decrease threshold
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
     """
 
     def __init__(self):

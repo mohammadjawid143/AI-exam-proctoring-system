@@ -29,6 +29,14 @@ class CNNLivenessDetector:
     - It does not verify student identity.
     - It uses MediaPipe FaceMesh for face landmarks and blink detection.
     - It uses the H5 CNN model only for Live/Spoof scoring.
+<<<<<<< HEAD
+=======
+
+    Important design decision:
+    The CNN model is treated carefully because small H5 liveness models can be
+    unstable. Borderline model scores are NOT marked as Spoof immediately.
+    They are shown as "Checking liveness" to avoid false Spoof warnings.
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
     """
 
     def __init__(
@@ -60,6 +68,13 @@ class CNNLivenessDetector:
         if not self.model_path.exists():
             raise FileNotFoundError(f"Liveness model not found: {self.model_path}")
 
+<<<<<<< HEAD
+=======
+        # Many small public H5 liveness models are over-sensitive.
+        # If ProctoringSystem passes 0.70, we cap the effective threshold at 0.60
+        # to reduce false Spoof on a real face. Clear spoof is still controlled by
+        # spoof_threshold below.
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         self.threshold = min(float(threshold), 0.60)
         self.original_threshold = float(threshold)
         self.spoof_threshold = float(spoof_threshold)
@@ -68,10 +83,16 @@ class CNNLivenessDetector:
         self.live_class_index = live_class_index
         self.padding = padding
 
+<<<<<<< HEAD
+=======
+        # Blink challenge settings.
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         self.enable_blink_challenge = enable_blink_challenge
         self.blink_valid_seconds = blink_valid_seconds
         self.blink_challenge_interval_seconds = blink_challenge_interval_seconds
 
+        # Basic quality checks. These are intentionally relaxed to avoid false
+        # rejection on normal laptop webcams.
         self.min_face_area_ratio = min_face_area_ratio
         self.max_face_area_ratio = max_face_area_ratio
         self.max_face_area_change = max_face_area_change
@@ -96,6 +117,10 @@ class CNNLivenessDetector:
 
         self.input_size = self.get_model_input_size()
 
+<<<<<<< HEAD
+=======
+        # MediaPipe is used for landmarks and blink detection.
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             max_num_faces=2,
@@ -148,11 +173,23 @@ class CNNLivenessDetector:
         return (int(width), int(height))
 
     def reset_blink(self):
+<<<<<<< HEAD
+=======
+        """
+        Reset blink tracking only.
+        """
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         self.closed_frames = 0
         self.last_blink_time = 0.0
         self.next_blink_challenge_time = 0.0
 
     def reset_tracking_state(self):
+<<<<<<< HEAD
+=======
+        """
+        Reset temporal liveness state.
+        """
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         self.reset_blink()
         self.last_face_area_ratio = None
         self.score_history.clear()
@@ -167,6 +204,17 @@ class CNNLivenessDetector:
         return np.array([x, y], dtype=np.int32)
 
     def _landmarks_to_square_bbox(self, landmarks, frame_w, frame_h):
+<<<<<<< HEAD
+=======
+        """
+        Build a square face crop from face landmarks.
+
+        The previous liveness model was likely trained with square/legacy face
+        crops. A tight MediaPipe landmark box can make the model output Spoof.
+        This function expands the face crop and makes it square to better match
+        typical liveness training preprocessing.
+        """
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         points = [
             self._landmark_to_point(lm, frame_w, frame_h)
             for lm in landmarks
@@ -200,6 +248,7 @@ class CNNLivenessDetector:
 
         return (x1, y1, x2, y2), face_area_ratio
 
+<<<<<<< HEAD
     def _face_error(
         self,
         status,
@@ -226,6 +275,16 @@ class CNNLivenessDetector:
             self.reset_tracking_state()
             return self._face_error("No frame", warning=True)
 
+=======
+    def _detect_face_data(self, frame):
+        """
+        Detect face and return face crop, landmarks, and face metadata.
+        """
+        if frame is None:
+            self.reset_tracking_state()
+            return self._face_error("No frame", warning=True)
+
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         frame_h, frame_w = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(rgb)
@@ -298,6 +357,30 @@ class CNNLivenessDetector:
             "face_crop": face_crop,
             "landmarks": largest_face["landmarks"],
             "face_area_ratio": largest_face["area_ratio"]
+        }
+
+    def _face_error(
+        self,
+        status,
+        warning=True,
+        face_count=0,
+        face_box=None,
+        face_crop=None,
+        landmarks=None,
+        face_area_ratio=0.0
+    ):
+        """
+        Build a face detection error dictionary.
+        """
+        return {
+            "ok": False,
+            "status": status,
+            "warning": warning,
+            "face_count": face_count,
+            "face_box": face_box,
+            "face_crop": face_crop,
+            "landmarks": landmarks,
+            "face_area_ratio": face_area_ratio
         }
 
     def _check_face_quality(self, face_crop, face_area_ratio):
@@ -592,6 +675,11 @@ class CNNLivenessDetector:
                 decision_reason="model_exception"
             )
 
+<<<<<<< HEAD
+=======
+        # Only mark Spoof when the model score is clearly low.
+        # Borderline scores are treated as Checking instead of Spoof.
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         if definite_spoof:
             self.reset_blink()
 
@@ -680,6 +768,12 @@ class CNNLivenessDetector:
         )
 
     def draw_result(self, frame, result):
+<<<<<<< HEAD
+=======
+        """
+        Draw liveness result on a frame.
+        """
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
         face_box = result.get("face_box")
 
         if result.get("is_live"):
@@ -736,4 +830,8 @@ class CNNLivenessDetector:
             cv2.LINE_AA
         )
 
+<<<<<<< HEAD
         return frame
+=======
+        return frame
+>>>>>>> 79eae8d92a84271ca98ddb5022b45b0fe8c20953
