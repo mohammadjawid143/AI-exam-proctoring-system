@@ -56,8 +56,8 @@ def _put(frame, text: str, y: int, color, scale: float = 0.65, thick: int = 2):
 
 def _color_status(
     text: str,
-    good_kw=("Verified", "Live face"),
-    bad_kw=("error", "Unknown", "Spoof", "WARNING"),
+    good_kw=("Verified", "Live"),
+    bad_kw=("error", "Unknown", "Spoof", "WARNING", "No face"),
 ):
     text = str(text).lower()
 
@@ -772,7 +772,7 @@ class ProctoringSystem:
             y,
             _color_status(
                 self.last_liveness_status,
-                good_kw=("Live face",)
+                good_kw=("Live", "Live face")
             )
         )
 
@@ -785,7 +785,7 @@ class ProctoringSystem:
             y,
             _color_status(
                 self.last_final_face_status,
-                good_kw=("Verified Live",)
+                good_kw=("Live", "Verified Live", "Verified Live Student")
             )
         )
 

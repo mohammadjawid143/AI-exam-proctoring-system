@@ -144,3 +144,16 @@ temp/
 *.tmp
 *.bak
 *.swp
+
+# =========================
+# Dataset / private student files
+# =========================
+dataset/
+
+# =========================
+# Extra model/data files
+# =========================
+*.keras
+*.hdf5
+*.npy
+*.npz

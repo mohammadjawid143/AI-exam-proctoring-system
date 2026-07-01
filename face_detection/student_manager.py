@@ -3,7 +3,9 @@ import json
 from datetime import datetime
 
 
-BASE_DIR = os.getcwd()
+BASE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..")
+)
 
 DATASET_DIR = os.path.join(BASE_DIR, "dataset", "students")
 DATABASE_DIR = os.path.join(BASE_DIR, "database")
@@ -24,8 +26,17 @@ def create_base_folders():
 def load_students():
     create_base_folders()
 
-    with open(STUDENTS_JSON_PATH, "r", encoding="utf-8") as file:
-        return json.load(file)
+    try:
+        with open(STUDENTS_JSON_PATH, "r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        if isinstance(data, list):
+            return data
+
+        return []
+
+    except json.JSONDecodeError:
+        return []
 
 
 def save_students(students):
@@ -39,7 +50,7 @@ def student_exists(student_id):
     students = load_students()
 
     for student in students:
-        if student["student_id"] == student_id:
+        if student.get("student_id") == student_id:
             return True
 
     return False
@@ -86,7 +97,7 @@ def find_student_by_id(student_id):
     students = load_students()
 
     for student in students:
-        if student["student_id"] == student_id:
+        if student.get("student_id") == student_id:
             return student
 
     return None

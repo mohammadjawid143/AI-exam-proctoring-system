@@ -1,5 +1,4 @@
 import cv2
-import time
 import queue
 import threading
 import traceback
@@ -7,12 +6,6 @@ from datetime import datetime
 
 
 class LatestFrameWorker:
-    """
-    برای مدل‌های سنگین مثل YOLO و DeepFace.
-    فقط آخرین فریم را نگه می‌دارد.
-    اگر مدل کند باشد، فریم‌های قدیمی جمع نمی‌شود.
-    """
-
     def __init__(self, name, process_func):
         self.name = name
         self.process_func = process_func
@@ -27,7 +20,8 @@ class LatestFrameWorker:
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self):
-        self.thread.start()
+        if not self.thread.is_alive():
+            self.thread.start()
 
     def stop(self):
         self.stop_event.set()
@@ -80,22 +74,18 @@ class LatestFrameWorker:
 
 
 class AsyncReportWorker:
-    """
-    برای log و screenshot.
-    باعث می‌شود cv2.imwrite و نوشتن فایل، Main Loop را کند نکند.
-    """
-
     def __init__(self):
         self.queue = queue.Queue()
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self):
-        self.thread.start()
+        if not self.thread.is_alive():
+            self.thread.start()
 
     def stop(self):
         self.stop_event.set()
-        self.thread.join(timeout=2)
+        self.thread.join(timeout=5)
 
     def log(self, log_path, alert_type, message):
         self.queue.put({
@@ -114,7 +104,7 @@ class AsyncReportWorker:
         })
 
     def _run(self):
-        while not self.stop_event.is_set():
+        while not self.stop_event.is_set() or not self.queue.empty():
             try:
                 item = self.queue.get(timeout=0.1)
             except queue.Empty:
@@ -136,7 +126,11 @@ class AsyncReportWorker:
                     )
 
                 elif item["type"] == "screenshot":
-                    cv2.imwrite(item["image_path"], item["frame"])
+                    cv2.imwrite(
+                        item["image_path"],
+                        item["frame"],
+                        [cv2.IMWRITE_JPEG_QUALITY, 85]
+                    )
 
             except Exception as error:
                 print("AsyncReportWorker error:", error)
