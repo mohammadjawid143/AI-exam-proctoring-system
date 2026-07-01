@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Exam Proctoring Dashboard</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            margin: 0;
+            padding: 0;
+        }
+
+        header {
+            background: #111827;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .container {
+            padding: 25px;
+        }
+
+        .filters {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        select, button {
+            padding: 10px;
+            margin: 5px;
+            font-size: 15px;
+        }
+
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .card {
+            background: white;
+            padding: 18px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .card h3 {
+            margin: 0;
+            color: #374151;
+            font-size: 15px;
+        }
+
+        .card p {
+            font-size: 26px;
+            font-weight: bold;
+            margin: 10px 0 0;
+            color: #111827;
+        }
+
+        .risk-normal {
+            color: green;
+        }
+
+        .risk-low {
+            color: #ca8a04;
+        }
+
+        .risk-medium {
+            color: orange;
+        }
+
+        .risk-high {
+            color: red;
+        }
+
+        .section {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        textarea {
+            width: 100%;
+            height: 300px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+
+        .screenshots {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+        }
+
+        .screenshots img {
+            width: 100%;
+            border-radius: 8px;
+            border: 2px solid #e5e7eb;
+        }
+
+        .screenshot-box {
+            background: #f9fafb;
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        .screenshot-box p {
+            font-size: 13px;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>AI Exam Proctoring Dashboard</h1>
+    <p>FastAPI Report Dashboard</p>
+</header>
+
+<div class="container">
+
+    <div class="filters">
+        <label>Exam:</label>
+        <select id="examSelect" onchange="loadStudents()">
+            <option value="">Select Exam</option>
+        </select>
+
+        <label>Student:</label>
+        <select id="studentSelect">
+            <option value="">Select Student</option>
+        </select>
+
+        <button onclick="loadReport()">Load Report</button>
+    </div>
+
+    <div class="section">
+        <h2>Report Summary</h2>
+        <h3 id="reportTitle">No report selected</h3>
+        <h2 id="riskLevel"></h2>
+    </div>
+
+    <div class="cards">
+        <div class="card">
+            <h3>Total Warnings</h3>
+            <p id="totalWarnings">0</p>
+        </div>
+
+        <div class="card">
+            <h3>Eye Warnings</h3>
+            <p id="eyeWarnings">0</p>
+        </div>
+
+        <div class="card">
+            <h3>Object Warnings</h3>
+            <p id="objectWarnings">0</p>
+        </div>
+
+        <div class="card">
+            <h3>Face Warnings</h3>
+            <p id="faceWarnings">0</p>
+        </div>
+
+        <div class="card">
+            <h3>Screenshots</h3>
+            <p id="screenshotCount">0</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Exam Log</h2>
+        <textarea id="logText" readonly>No log loaded.</textarea>
+    </div>
+
+    <div class="section">
+        <h2>Violation Screenshots</h2>
+        <div id="screenshots" class="screenshots"></div>
+    </div>
+
+</div>
+
+<script>
+    async function loadExams() {
+        const response = await fetch("/api/exams");
+        const data = await response.json();
+
+        const examSelect = document.getElementById("examSelect");
+        examSelect.innerHTML = '<option value="">Select Exam</option>';
+
+        data.exams.forEach(exam => {
+            const option = document.createElement("option");
+            option.value = exam;
+            option.textContent = exam;
+            examSelect.appendChild(option);
+        });
+    }
+
+    async function loadStudents() {
+        const examId = document.getElementById("examSelect").value;
+        const studentSelect = document.getElementById("studentSelect");
+
+        studentSelect.innerHTML = '<option value="">Select Student</option>';
+
+        if (!examId) {
+            return;
+        }
+
+        const response = await fetch(`/api/exams/${examId}/students`);
+        const data = await response.json();
+
+        data.students.forEach(student => {
+            const option = document.createElement("option");
+            option.value = student;
+            option.textContent = student;
+            studentSelect.appendChild(option);
+        });
+    }
+
+    function setRiskColor(riskLevel) {
+        const riskElement = document.getElementById("riskLevel");
+
+        riskElement.className = "";
+
+        if (riskLevel === "Normal") {
+            riskElement.classList.add("risk-normal");
+        } else if (riskLevel === "Low Risk") {
+            riskElement.classList.add("risk-low");
+        } else if (riskLevel === "Medium Risk") {
+            riskElement.classList.add("risk-medium");
+        } else {
+            riskElement.classList.add("risk-high");
+        }
+    }
+
+    async function loadReport() {
+        const examId = document.getElementById("examSelect").value;
+        const studentId = document.getElementById("studentSelect").value;
+
+        if (!examId || !studentId) {
+            alert("Please select exam and student.");
+            return;
+        }
+
+        const response = await fetch(`/api/reports/${examId}/${studentId}`);
+
+        if (!response.ok) {
+            alert("Report not found.");
+            return;
+        }
+
+        const data = await response.json();
+
+        document.getElementById("reportTitle").textContent =
+            `Exam: ${data.exam_id} | Student: ${data.student_id}`;
+
+        document.getElementById("riskLevel").textContent =
+            `Risk Level: ${data.risk_level}`;
+
+        setRiskColor(data.risk_level);
+
+        document.getElementById("totalWarnings").textContent =
+            data.alert_counts.total_warnings;
+
+        document.getElementById("eyeWarnings").textContent =
+            data.alert_counts.eye_warnings;
+
+        document.getElementById("objectWarnings").textContent =
+            data.alert_counts.object_warnings;
+
+        document.getElementById("faceWarnings").textContent =
+            data.alert_counts.face_warnings;
+
+        document.getElementById("screenshotCount").textContent =
+            data.screenshots.length;
+
+        document.getElementById("logText").value =
+            data.log_text || "No log found.";
+
+        const screenshotsDiv = document.getElementById("screenshots");
+        screenshotsDiv.innerHTML = "";
+
+        if (data.screenshots.length === 0) {
+            screenshotsDiv.innerHTML = "<p>No screenshots found.</p>";
+        }
+
+        data.screenshots.forEach(item => {
+            const box = document.createElement("div");
+            box.className = "screenshot-box";
+
+            const img = document.createElement("img");
+            img.src = item.url;
+
+            const caption = document.createElement("p");
+            caption.textContent = item.filename;
+
+            box.appendChild(img);
+            box.appendChild(caption);
+
+            screenshotsDiv.appendChild(box);
+        });
+    }
+
+    loadExams();
+</script>
+
+</body>
+</html>

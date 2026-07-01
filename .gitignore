@@ -1,0 +1,146 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.pkl
+*.pickle
+
+# =========================
+# Virtual environments
+# =========================
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.iml
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Environment variables
+# =========================
+.env
+.env.*
+*.env
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+log.txt
+
+# =========================
+# Reports / Exam results
+# =========================
+reports/
+screenshots/
+recordings/
+exam_recordings/
+output/
+outputs/
+
+# =========================
+# Student data / private data
+# =========================
+students.json
+student_data/
+registered_students/
+profile_images/
+face_database/
+database/
+data/
+
+# =========================
+# Models / Weights
+# =========================
+*.h5
+*.onnx
+*.pt
+*.pth
+*.weights
+*.tflite
+*.pb
+models/
+face_detection/models/
+object_detection/models/
+
+# =========================
+# YOLO / Ultralytics
+# =========================
+runs/
+yolo11n.pt
+yolov8n.pt
+*.yaml.cache
+
+# =========================
+# Media files
+# =========================
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.wav
+*.mp3
+*.flac
+
+# =========================
+# Databases
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================
+# Jupyter / Notebooks
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Test / cache
+# =========================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+coverage/
+htmlcov/
+.coverage
+
+# =========================
+# Build files
+# =========================
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Temporary files
+# =========================
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
