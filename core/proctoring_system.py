@@ -15,15 +15,25 @@ _WHITE = (255, 255, 255)
 _GREEN = (0, 255, 0)
 _RED = (0, 0, 255)
 _CYAN = (0, 255, 255)
+_YELLOW = (0, 255, 255)
 
-# Worker input resolutions
+# Worker input resolutions.
+# Higher object resolution improves phone/book detection.
 _EYE_RES = 640
-_OBJECT_RES = 416
-_FACE_RES = 320
+_OBJECT_RES = 640
+_IDENTITY_RES = 640
+_LIVENESS_RES = 480
 _DISPLAY_W = 960
 
 
 def _resize_max(frame, max_side: int):
+    """
+    Resize a frame so the longest side becomes max_side.
+    Keeps aspect ratio.
+    """
+    if frame is None:
+        return None
+
     if max_side <= 0:
         return frame
 
@@ -42,6 +52,9 @@ def _resize_max(frame, max_side: int):
 
 
 def _put(frame, text: str, y: int, color, scale: float = 0.65, thick: int = 2):
+    """
+    Draw text on the dashboard.
+    """
     cv2.putText(
         frame,
         text,
@@ -54,11 +67,26 @@ def _put(frame, text: str, y: int, color, scale: float = 0.65, thick: int = 2):
     )
 
 
+def _short(text, max_len=70):
+    """
+    Shorten long dashboard messages.
+    """
+    text = str(text)
+
+    if len(text) <= max_len:
+        return text
+
+    return text[:max_len] + "..."
+
+
 def _color_status(
     text: str,
-    good_kw=("Verified", "Live"),
-    bad_kw=("error", "Unknown", "Spoof", "WARNING", "No face"),
+    good_kw=("Verified", "Live", "OK"),
+    bad_kw=("error", "Unknown", "Spoof", "WARNING", "No face", "Multiple"),
 ):
+    """
+    Return dashboard color based on status keywords.
+    """
     text = str(text).lower()
 
     if any(keyword.lower() in text for keyword in good_kw):
@@ -71,10 +99,24 @@ def _color_status(
 
 
 class ProctoringSystem:
-    # How often workers run
+    """
+    Main online exam proctoring controller.
+
+    This class coordinates:
+    - Eye tracking
+    - Object detection
+    - Face identity verification
+    - CNN liveness detection
+    - Audio/noise detection
+    - Report logging and screenshot saving
+
+    Heavy modules run in worker threads to keep the camera UI responsive.
+    """
+
+    # Worker scheduling.
     EYE_EVERY = 2
     OBJECT_EVERY = 5
-    FACE_EVERY = 5
+    LIVENESS_EVERY = 3
     AUDIO_EVERY = 5
 
     def __init__(
@@ -85,6 +127,7 @@ class ProctoringSystem:
         enable_eye=True,
         enable_object=True,
         enable_audio=True,
+        enable_liveness=None,
     ):
         self.student_id = student_id
         self.exam_id = exam_id
@@ -94,7 +137,14 @@ class ProctoringSystem:
         self.enable_object = enable_object
         self.enable_audio = enable_audio
 
-        # Report folders
+        # Backward compatibility:
+        # If enable_liveness is not passed, it follows enable_face.
+        if enable_liveness is None:
+            self.enable_liveness = enable_face
+        else:
+            self.enable_liveness = enable_liveness
+
+        # Report folders.
         self.base_report_dir = os.path.join(
             "reports",
             "exams",
@@ -114,38 +164,45 @@ class ProctoringSystem:
             "log.txt"
         )
 
-        # Frame counter and cooldowns
+        # Frame counter and cooldowns.
         self.frame_count = 0
         self.last_logged_times = {}
 
-        # For old face authenticator only
+        # Identity verification interval.
         self.face_check_interval_seconds = 8
         self.last_identity_check_time = 0.0
 
-        # Eye cached values
+        # Eye cached values.
         self.last_gaze_direction = "Eye disabled"
         self.last_eye_ratio = 0.0
         self.last_eye_warning = False
         self.eye_warning_start = None
         self.eye_warning_seconds = 5
 
-        # Object cached values
+        # Object cached values.
         self.last_detected_objects = []
         self.last_object_warning = False
         self.last_person_count = 0
         self.last_applied_object_time = 0.0
 
-        # Face cached values
+        # Face identity cached values.
         self.last_face_status = "Face disabled"
-        self.last_liveness_status = "Liveness disabled"
-        self.last_final_face_status = "Face disabled"
         self.last_identity_distance = None
         self.last_identity_threshold = None
-        self.last_live_score = None
-        self.last_spoof_score = None
         self.last_applied_face_time = 0.0
 
-        # Audio cached values
+        # Liveness cached values.
+        self.last_liveness_status = "Liveness disabled"
+        self.last_liveness_warning = False
+        self.last_live_score = None
+        self.last_spoof_score = None
+        self.last_liveness_face_count = 0
+        self.last_applied_liveness_time = 0.0
+
+        # Final face security verdict.
+        self.last_final_face_status = "Face security disabled"
+
+        # Audio cached values.
         self.last_audio_status = "Audio disabled"
         self.last_audio_warning = False
         self.last_audio_volume = 0.0
@@ -153,28 +210,35 @@ class ProctoringSystem:
         self.last_audio_threshold = 0.0
         self.last_audio_calibrated = False
 
-        # FPS
+        # FPS values.
         self._fps = 0.0
         self._fps_frames = 0
         self._fps_t0 = time.perf_counter()
 
-        # Module objects
+        # Module objects.
         self.eye_tracker = None
         self.object_detector = None
+
         self.face_authenticator = None
         self.face_available = False
+
+        self.liveness_detector = None
+        self.liveness_available = False
+
         self.audio_detector = None
 
-        # Workers
+        # Workers.
         self.report_worker = AsyncReportWorker()
         self.eye_worker = None
         self.object_worker = None
         self.face_worker = None
+        self.liveness_worker = None
 
-        # Initialize systems
+        # Initialize all systems.
         self._init_eye_tracking()
         self._init_object_detection()
         self._init_face_system()
+        self._init_liveness_system()
         self._init_audio_detection()
         self._init_workers()
 
@@ -183,7 +247,11 @@ class ProctoringSystem:
     # --------------------------------------------------
 
     def _init_eye_tracking(self):
+        """
+        Initialize MediaPipe-based eye and gaze tracking.
+        """
         if not self.enable_eye:
+            self.last_gaze_direction = "Eye disabled"
             return
 
         try:
@@ -199,12 +267,10 @@ class ProctoringSystem:
                         "closed_eye_threshold": 0.18,
                         "calibration_frames": 50,
 
-                        # Worker thread should not draw on frame
                         "draw": False,
                         "show_debug_text": False,
                         "iris_point_radius": 2,
 
-                        # Fix left/right reverse
                         "mirror_output": True,
                         "invert_head_vertical": False,
                         "invert_head_horizontal": False,
@@ -226,7 +292,7 @@ class ProctoringSystem:
         except Exception as error:
             self.enable_eye = False
             self.eye_tracker = None
-            self.last_gaze_direction = "Eye system error"
+            self.last_gaze_direction = f"Eye system error: {error}"
 
             self.log_alert(
                 "EYE_SYSTEM_ERROR",
@@ -234,26 +300,49 @@ class ProctoringSystem:
             )
 
     def _init_object_detection(self):
+        """
+        Initialize YOLO object detection.
+        """
         if not self.enable_object:
             return
 
         try:
-            # New detector version
+            # Prefer YOLO small model for better accuracy.
+            # Fall back to nano model if yolo11s.pt is not available.
             try:
                 self.object_detector = CheatingObjectDetector(
-                    model_path="yolo11n.pt",
-                    confidence_threshold=0.45,
+                    model_path="yolo11s.pt",
+                    confidence_threshold=0.40,
+                    img_size=_OBJECT_RES,
+                    skip_frames=1,
+                    show_only_relevant=True,
+                )
+
+            except TypeError:
+                self.object_detector = CheatingObjectDetector(
+                    model_path="yolo11s.pt",
+                    confidence_threshold=0.40,
                     img_size=_OBJECT_RES,
                     skip_frames=1,
                 )
 
-            # Old detector version compatibility
-            except TypeError:
-                self.object_detector = CheatingObjectDetector(
-                    model_path="yolo11n.pt",
-                    confidence_threshold=0.45,
-                    img_size=_OBJECT_RES,
-                )
+            except Exception:
+                try:
+                    self.object_detector = CheatingObjectDetector(
+                        model_path="yolo11n.pt",
+                        confidence_threshold=0.40,
+                        img_size=_OBJECT_RES,
+                        skip_frames=1,
+                        show_only_relevant=True,
+                    )
+
+                except TypeError:
+                    self.object_detector = CheatingObjectDetector(
+                        model_path="yolo11n.pt",
+                        confidence_threshold=0.40,
+                        img_size=_OBJECT_RES,
+                        skip_frames=1,
+                    )
 
             self.log_alert(
                 "OBJECT_SYSTEM_READY",
@@ -270,7 +359,13 @@ class ProctoringSystem:
             )
 
     def _init_face_system(self):
+        """
+        Initialize student identity verification only.
+        Liveness is initialized separately.
+        """
         if not self.enable_face:
+            self.last_face_status = "Face disabled"
+            self.last_final_face_status = "Face disabled"
             return
 
         try:
@@ -283,19 +378,17 @@ class ProctoringSystem:
 
             self.face_available = True
             self.last_face_status = "Face system ready"
-            self.last_liveness_status = "Liveness system ready"
-            self.last_final_face_status = "Face security ready"
+            self.last_final_face_status = "Waiting"
 
             self.log_alert(
                 "FACE_SYSTEM_READY",
-                "Face recognition + CNN liveness initialized."
+                "Face identity verification initialized."
             )
 
         except Exception as error:
             self.face_available = False
             self.face_authenticator = None
-            self.last_face_status = "Face system error"
-            self.last_liveness_status = "Liveness system error"
+            self.last_face_status = f"Face system error: {error}"
             self.last_final_face_status = "Face security error"
 
             self.log_alert(
@@ -303,7 +396,54 @@ class ProctoringSystem:
                 f"Face system disabled: {error}"
             )
 
+    def _init_liveness_system(self):
+        """
+        Initialize CNN liveness detection separately from DeepFace identity verification.
+        """
+        if not self.enable_liveness:
+            self.last_liveness_status = "Liveness disabled"
+            return
+
+        try:
+            from face_detection.cnn_liveness_detector import CNNLivenessDetector
+
+            self.liveness_detector = CNNLivenessDetector(
+                threshold=0.70,
+                sigmoid_live_high=True,
+                enable_blink_challenge=True,
+
+                # A valid blink remains accepted for 12 seconds.
+                blink_valid_seconds=12.0,
+
+                # The system asks for a new blink after a longer interval.
+                blink_challenge_interval_seconds=18.0,
+            )
+
+            self.liveness_available = True
+            self.last_liveness_status = "Liveness system ready"
+
+            self.log_alert(
+                "LIVENESS_SYSTEM_READY",
+                "CNN liveness detection initialized."
+            )
+
+        except Exception as error:
+            self.liveness_available = False
+            self.liveness_detector = None
+            self.last_liveness_status = f"Liveness system error: {error}"
+
+            self.log_alert(
+                "LIVENESS_SYSTEM_ERROR",
+                f"Liveness system disabled: {error}"
+            )
+
     def _init_audio_detection(self):
+        """
+        Initialize audio/noise detection.
+
+        device=None means the OS default input device is used.
+        This avoids invalid device errors when Windows changes device indexes.
+        """
         if not self.enable_audio:
             self.last_audio_status = "Audio disabled"
             return
@@ -340,6 +480,9 @@ class ProctoringSystem:
             )
 
     def _init_workers(self):
+        """
+        Initialize background workers for heavy processing.
+        """
         if self.enable_eye and self.eye_tracker is not None:
             self.eye_worker = LatestFrameWorker(
                 name="eye_worker",
@@ -352,22 +495,26 @@ class ProctoringSystem:
                 process_func=self._process_object_frame
             )
 
-        # IMPORTANT:
-        # If DeepFaceAuthenticator has submit_frame(),
-        # it already has internal identity/liveness threads.
-        # So we do NOT create another face_worker.
         if self.face_available and self.face_authenticator is not None:
-            if not hasattr(self.face_authenticator, "submit_frame"):
-                self.face_worker = LatestFrameWorker(
-                    name="face_worker",
-                    process_func=self._process_face_frame
-                )
+            self.face_worker = LatestFrameWorker(
+                name="face_worker",
+                process_func=self._process_face_frame
+            )
+
+        if self.liveness_available and self.liveness_detector is not None:
+            self.liveness_worker = LatestFrameWorker(
+                name="liveness_worker",
+                process_func=self._process_liveness_frame
+            )
 
     # --------------------------------------------------
     # Worker process functions
     # --------------------------------------------------
 
     def _process_eye_frame(self, small_frame):
+        """
+        Process eye tracking in a worker thread.
+        """
         gaze, ratio = self.eye_tracker.track_eyes(small_frame)
 
         return {
@@ -377,9 +524,9 @@ class ProctoringSystem:
         }
 
     def _process_object_frame(self, frame):
-        # frame must be original-size frame.
-        # CheatingObjectDetector internally resizes to img_size=416
-        # and returns boxes in original frame coordinates.
+        """
+        Process YOLO object detection in a worker thread.
+        """
         cheating_detected, detected_objects = self.object_detector.detect_objects(frame)
 
         person_count = sum(
@@ -395,40 +542,37 @@ class ProctoringSystem:
         }
 
     def _process_face_frame(self, small_frame):
-        now = time.time()
-
-        run_identity_check = (
-            now - self.last_identity_check_time
-        ) >= self.face_check_interval_seconds
-
-        if run_identity_check:
-            self.last_identity_check_time = now
-
-        if hasattr(self.face_authenticator, "verify_frame_with_liveness"):
-            result = self.face_authenticator.verify_frame_with_liveness(
-                small_frame,
-                run_identity_check=run_identity_check
-            )
-
-            return {
-                "mode": "face_liveness",
-                "result": result,
-                "time": now
-            }
-
+        """
+        Process student identity verification in a worker thread.
+        """
         result = self.face_authenticator.verify_frame(small_frame)
 
         return {
-            "mode": "face_only",
+            "mode": "face_identity",
             "result": result,
-            "time": now
+            "time": time.time()
+        }
+
+    def _process_liveness_frame(self, small_frame):
+        """
+        Process CNN liveness detection in a worker thread.
+        """
+        result = self.liveness_detector.predict(small_frame)
+
+        return {
+            "mode": "liveness",
+            "result": result,
+            "time": time.time()
         }
 
     # --------------------------------------------------
-    # Apply results
+    # Apply worker results
     # --------------------------------------------------
 
     def _apply_eye_result(self, frame):
+        """
+        Apply latest eye tracking result.
+        """
         if self.eye_worker is None:
             return
 
@@ -480,6 +624,9 @@ class ProctoringSystem:
         self.last_eye_ratio = ratio
 
     def _apply_object_result(self, frame):
+        """
+        Apply latest object detection result.
+        """
         if self.object_worker is None:
             return
 
@@ -523,21 +670,9 @@ class ProctoringSystem:
                 )
 
     def _apply_face_result(self, frame):
-        if not self.face_available or self.face_authenticator is None:
-            return
-
-        # New DeepFaceAuthenticator:
-        # it already has internal identity/liveness workers.
-        if hasattr(self.face_authenticator, "submit_frame"):
-            result = self.face_authenticator.verify_frame_with_liveness(
-                frame,
-                run_identity_check=False
-            )
-
-            self._store_face_liveness(result, frame)
-            return
-
-        # Old-style external face_worker
+        """
+        Apply latest identity verification result.
+        """
         if self.face_worker is None:
             return
 
@@ -553,17 +688,9 @@ class ProctoringSystem:
 
         self.last_applied_face_time = result_time
 
-        mode = data["mode"]
         result = data["result"]
 
-        if mode == "face_liveness":
-            self._store_face_liveness(result, frame)
-            return
-
-        self.last_face_status = result["status"]
-        self.last_final_face_status = result["status"]
-        self.last_liveness_status = "Liveness not available"
-
+        self.last_face_status = result.get("status", "Face error")
         self.last_identity_distance = result.get("distance")
         self.last_identity_threshold = result.get("threshold")
 
@@ -576,38 +703,61 @@ class ProctoringSystem:
 
                 self.log_alert(
                     "FACE_WARNING",
-                    f"{result['status']} | Screenshot: {screenshot_path}"
-                )
-
-    def _store_face_liveness(self, result, frame):
-        self.last_face_status = result.get("identity_status", "")
-        self.last_liveness_status = result.get("liveness_status", "")
-        self.last_final_face_status = result.get("final_status", "")
-
-        self.last_identity_distance = result.get("identity_distance")
-        self.last_identity_threshold = result.get("identity_threshold")
-
-        self.last_live_score = result.get("live_score")
-        self.last_spoof_score = result.get("spoof_score")
-
-        if result.get("warning"):
-            if self.should_log("FACE_LIVENESS_WARNING", cooldown_seconds=10):
-                screenshot_path = self.save_screenshot(
-                    frame,
-                    "face_liveness_warning"
-                )
-
-                self.log_alert(
-                    "FACE_LIVENESS_WARNING",
-                    f"{result.get('final_status')} | "
-                    f"Face: {result.get('identity_status')} | "
-                    f"Liveness: {result.get('liveness_status')} | "
-                    f"Dist: {self._fmt(result.get('identity_distance'))} | "
-                    f"Live: {self._fmt(result.get('live_score'))} | "
+                    f"{self.last_face_status} | "
+                    f"Dist: {self._fmt(self.last_identity_distance)} | "
                     f"Screenshot: {screenshot_path}"
                 )
 
+        self._update_final_face_status()
+
+    def _apply_liveness_result(self, frame):
+        """
+        Apply latest CNN liveness result.
+        """
+        if self.liveness_worker is None:
+            return
+
+        data = self.liveness_worker.get_latest_result()
+
+        if not data:
+            return
+
+        result_time = data.get("time", 0.0)
+
+        if result_time <= self.last_applied_liveness_time:
+            return
+
+        self.last_applied_liveness_time = result_time
+
+        result = data["result"]
+
+        self.last_liveness_status = result.get("status", "Liveness error")
+        self.last_liveness_warning = bool(result.get("warning", False))
+        self.last_live_score = result.get("live_score")
+        self.last_spoof_score = result.get("spoof_score")
+        self.last_liveness_face_count = result.get("face_count", 0)
+
+        if result.get("warning"):
+            if self.should_log("LIVENESS_WARNING", cooldown_seconds=10):
+                screenshot_path = self.save_screenshot(
+                    frame,
+                    "liveness_warning"
+                )
+
+                self.log_alert(
+                    "LIVENESS_WARNING",
+                    f"{self.last_liveness_status} | "
+                    f"Live: {self._fmt(self.last_live_score)} | "
+                    f"Spoof: {self._fmt(self.last_spoof_score)} | "
+                    f"Screenshot: {screenshot_path}"
+                )
+
+        self._update_final_face_status()
+
     def _apply_audio_result(self):
+        """
+        Apply latest audio/noise detection result.
+        """
         if not self.enable_audio or self.audio_detector is None:
             return
 
@@ -632,17 +782,64 @@ class ProctoringSystem:
                     )
 
         except Exception as error:
-            self.last_audio_status = "Audio check error"
+            self.last_audio_status = f"Audio check error: {error}"
             self.last_audio_warning = True
 
             if self.should_log("AUDIO_ERROR", cooldown_seconds=10):
                 self.log_alert("AUDIO_ERROR", str(error))
 
     # --------------------------------------------------
+    # Final verdict logic
+    # --------------------------------------------------
+
+    def _update_final_face_status(self):
+        """
+        Combine identity verification and liveness into one final verdict.
+        """
+        face_status = str(self.last_face_status)
+        live_status = str(self.last_liveness_status)
+
+        face_ok = face_status == "Student Verified"
+        liveness_ok = live_status in {"Live", "Live face detected"}
+
+        if not self.enable_face and not self.enable_liveness:
+            self.last_final_face_status = "Face security disabled"
+
+        elif "No face" in live_status:
+            self.last_final_face_status = "No face detected"
+
+        elif "Multiple faces" in live_status:
+            self.last_final_face_status = "Multiple faces detected"
+
+        elif "Please blink" in live_status:
+            self.last_final_face_status = "Please blink once"
+
+        elif "Spoof" in live_status:
+            self.last_final_face_status = "Spoof"
+
+        elif "Unknown" in face_status:
+            self.last_final_face_status = "Unknown Person"
+
+        elif "Error" in face_status or "error" in face_status:
+            self.last_final_face_status = "Face verification error"
+
+        elif face_ok and liveness_ok:
+            self.last_final_face_status = "Live"
+
+        elif face_status == "Face not checked":
+            self.last_final_face_status = "Waiting for face verification"
+
+        else:
+            self.last_final_face_status = "Waiting"
+
+    # --------------------------------------------------
     # Drawing
     # --------------------------------------------------
 
     def draw_object_boxes(self, frame):
+        """
+        Draw YOLO object bounding boxes.
+        """
         if not self.enable_object:
             return
 
@@ -700,6 +897,9 @@ class ProctoringSystem:
             )
 
     def draw_dashboard(self, frame):
+        """
+        Draw live dashboard information on the camera frame.
+        """
         y = 28
 
         _put(
@@ -712,7 +912,7 @@ class ProctoringSystem:
 
         y += 30
 
-        # Eye
+        # Eye status.
         if not self.enable_eye:
             _put(frame, "Eye: disabled", y, _CYAN)
 
@@ -734,7 +934,7 @@ class ProctoringSystem:
 
         y += 30
 
-        # Object
+        # Object status.
         if not self.enable_object:
             _put(frame, "Objects: disabled", y, _CYAN)
 
@@ -756,42 +956,53 @@ class ProctoringSystem:
 
         y += 30
 
-        # Face
-        _put(
-            frame,
-            f"Face: {self.last_face_status}",
-            y,
-            _color_status(self.last_face_status)
-        )
+        # Face identity status.
+        if not self.enable_face:
+            _put(frame, "Face: disabled", y, _CYAN)
 
-        y += 30
-
-        # Liveness
-        _put(
-            frame,
-            f"Liveness: {self.last_liveness_status}",
-            y,
-            _color_status(
-                self.last_liveness_status,
-                good_kw=("Live", "Live face")
+        else:
+            _put(
+                frame,
+                f"Face: {_short(self.last_face_status, 55)}",
+                y,
+                _color_status(self.last_face_status)
             )
-        )
 
         y += 30
 
-        # Final verdict
+        # Liveness status.
+        if not self.enable_liveness:
+            _put(frame, "Liveness: disabled", y, _CYAN)
+
+        else:
+            _put(
+                frame,
+                f"Liveness: {_short(self.last_liveness_status, 55)}",
+                y,
+                _color_status(
+                    self.last_liveness_status,
+                    good_kw=("Live", "Live face", "OK"),
+                    bad_kw=("Spoof", "No face", "Multiple", "error")
+                )
+            )
+
+        y += 30
+
+        # Final verdict.
         _put(
             frame,
-            f"Verdict: {self.last_final_face_status}",
+            f"Verdict: {_short(self.last_final_face_status, 55)}",
             y,
             _color_status(
                 self.last_final_face_status,
-                good_kw=("Live", "Verified Live", "Verified Live Student")
+                good_kw=("Live",),
+                bad_kw=("Spoof", "Unknown", "No face", "Multiple", "error")
             )
         )
 
         y += 30
 
+        # Scores.
         _put(
             frame,
             f"Live: {self._fmt(self.last_live_score)} | "
@@ -804,7 +1015,7 @@ class ProctoringSystem:
 
         y += 28
 
-        # Audio
+        # Audio status.
         if not self.enable_audio:
             _put(frame, "Audio: disabled", y, _CYAN, 0.6)
 
@@ -821,7 +1032,7 @@ class ProctoringSystem:
         else:
             _put(
                 frame,
-                f"Audio: {self.last_audio_status} | "
+                f"Audio: {_short(self.last_audio_status, 50)} | "
                 f"Vol: {self.last_audio_volume:.4f} | "
                 f"dB: {self.last_audio_db:.2f}",
                 y,
@@ -834,6 +1045,9 @@ class ProctoringSystem:
     # --------------------------------------------------
 
     def _fmt(self, value):
+        """
+        Format dashboard numbers.
+        """
         if value is None:
             return "—"
 
@@ -843,6 +1057,9 @@ class ProctoringSystem:
         return str(value)
 
     def _update_fps(self):
+        """
+        Update FPS every 30 frames.
+        """
         self._fps_frames += 1
 
         if self._fps_frames >= 30:
@@ -857,6 +1074,9 @@ class ProctoringSystem:
             self._fps_t0 = time.perf_counter()
 
     def should_log(self, alert_type, cooldown_seconds=5):
+        """
+        Prevent repeated logs for the same alert type.
+        """
         now = time.time()
         last = self.last_logged_times.get(alert_type, 0.0)
 
@@ -867,6 +1087,9 @@ class ProctoringSystem:
         return False
 
     def log_alert(self, alert_type, message):
+        """
+        Log an alert using the async report worker.
+        """
         if self.report_worker is not None:
             self.report_worker.log(
                 self.log_path,
@@ -885,6 +1108,9 @@ class ProctoringSystem:
         print(f"[{current_time}] {alert_type}: {message}")
 
     def save_screenshot(self, frame, alert_type):
+        """
+        Save violation screenshot asynchronously.
+        """
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{alert_type}_{current_time}.jpg"
         path = os.path.join(self.screenshot_dir, filename)
@@ -901,11 +1127,42 @@ class ProctoringSystem:
 
         return path
 
+    def _check_worker_errors(self):
+        """
+        Check worker thread errors and write them to the report log.
+        """
+        workers = [
+            self.eye_worker,
+            self.object_worker,
+            self.face_worker,
+            self.liveness_worker,
+        ]
+
+        for worker in workers:
+            if worker is None:
+                continue
+
+            error = worker.get_latest_error()
+
+            if not error:
+                continue
+
+            alert_type = f"{error.get('worker', 'worker').upper()}_ERROR"
+
+            if self.should_log(alert_type, cooldown_seconds=10):
+                self.log_alert(
+                    alert_type,
+                    error.get("error", "Unknown worker error")
+                )
+
     # --------------------------------------------------
     # Main loop
     # --------------------------------------------------
 
     def run(self):
+        """
+        Start the real-time proctoring loop.
+        """
         cap = cv2.VideoCapture(0)
 
         if not cap.isOpened():
@@ -916,13 +1173,14 @@ class ProctoringSystem:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-        # Start workers
+        # Start workers.
         self.report_worker.start()
 
         for worker in (
             self.eye_worker,
             self.object_worker,
-            self.face_worker
+            self.face_worker,
+            self.liveness_worker,
         ):
             if worker is not None:
                 worker.start()
@@ -951,11 +1209,11 @@ class ProctoringSystem:
                 self.frame_count += 1
                 frame_count = self.frame_count
 
-                # -------------------------------
-                # 1. Submit frames to workers
-                # -------------------------------
+                # -----------------------------------
+                # 1. Submit frames to worker threads
+                # -----------------------------------
 
-                # Eye can receive smaller frame because only gaze result is needed
+                # Eye tracking runs on a resized frame.
                 if (
                     self.eye_worker is not None
                     and frame_count % self.EYE_EVERY == 0
@@ -964,41 +1222,42 @@ class ProctoringSystem:
                         _resize_max(frame, _EYE_RES)
                     )
 
-                # IMPORTANT:
-                # Send original frame to YOLO worker.
-                # Detector internally resizes to 416 and returns boxes
-                # in original frame coordinates.
+                # Object detection receives original frame.
+                # The detector internally resizes to YOLO input size.
                 if (
                     self.object_worker is not None
                     and frame_count % self.OBJECT_EVERY == 0
                 ):
                     self.object_worker.submit(frame)
 
-                # Old face system only
+                # Identity verification is expensive, so run it every few seconds.
                 if (
                     self.face_worker is not None
-                    and frame_count % self.FACE_EVERY == 0
+                    and time.time() - self.last_identity_check_time >= self.face_check_interval_seconds
                 ):
+                    self.last_identity_check_time = time.time()
                     self.face_worker.submit(
-                        _resize_max(frame, _FACE_RES)
+                        _resize_max(frame, _IDENTITY_RES)
                     )
 
-                # New DeepFaceAuthenticator with internal threads:
-                # Call submit_frame every camera frame.
-                # It controls its own IDENTITY_EVERY and LIVENESS_EVERY.
+                # Liveness runs more frequently than DeepFace identity verification.
                 if (
-                    self.face_available
-                    and self.face_authenticator is not None
-                    and hasattr(self.face_authenticator, "submit_frame")
+                    self.liveness_worker is not None
+                    and frame_count % self.LIVENESS_EVERY == 0
                 ):
-                    self.face_authenticator.submit_frame(frame)
+                    self.liveness_worker.submit(
+                        _resize_max(frame, _LIVENESS_RES)
+                    )
 
-                # -------------------------------
-                # 2. Apply cached results
-                # -------------------------------
+                # -----------------------------------
+                # 2. Apply cached worker results
+                # -----------------------------------
 
                 self._apply_eye_result(frame)
                 self._apply_object_result(frame)
+
+                if self.liveness_available:
+                    self._apply_liveness_result(frame)
 
                 if self.face_available:
                     self._apply_face_result(frame)
@@ -1006,17 +1265,20 @@ class ProctoringSystem:
                 if frame_count % self.AUDIO_EVERY == 0:
                     self._apply_audio_result()
 
-                # -------------------------------
-                # 3. Draw
-                # -------------------------------
+                if frame_count % 30 == 0:
+                    self._check_worker_errors()
+
+                # -----------------------------------
+                # 3. Draw dashboard and boxes
+                # -----------------------------------
 
                 self.draw_object_boxes(frame)
                 self.draw_dashboard(frame)
                 self._update_fps()
 
-                # -------------------------------
-                # 4. Display
-                # -------------------------------
+                # -----------------------------------
+                # 4. Display frame
+                # -----------------------------------
 
                 if _DISPLAY_W:
                     display_frame = _resize_max(frame, _DISPLAY_W)
@@ -1053,16 +1315,11 @@ class ProctoringSystem:
             for worker in (
                 self.eye_worker,
                 self.object_worker,
-                self.face_worker
+                self.face_worker,
+                self.liveness_worker,
             ):
                 if worker is not None:
                     worker.stop()
-
-            if (
-                self.face_authenticator is not None
-                and hasattr(self.face_authenticator, "shutdown")
-            ):
-                self.face_authenticator.shutdown()
 
             if self.report_worker is not None:
                 self.report_worker.stop()
