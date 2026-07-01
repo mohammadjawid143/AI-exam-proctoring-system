@@ -1,292 +1,117 @@
 import cv2
 import time
 
-from face_detection.deepface_auth import (
-    DeepFaceAuthenticator,
-    save_exam_log,
-    save_violation_screenshot,
-    MODEL_NAME,
-    DETECTOR_BACKEND
-)
-
-
-def format_value(value):
-    if value is None:
-        return "None"
-
-    if isinstance(value, float):
-        return f"{value:.2f}"
-
-    return str(value)
-
-
-def draw_liveness_box(frame, result):
-    face_box = result.get("face_box")
-
-    if face_box is None:
-        return frame
-
-    x1, y1, x2, y2 = face_box
-
-    if result["is_live"]:
-        color = (0, 255, 0)
-    else:
-        color = (0, 0, 255)
-
-    live_score = result.get("live_score")
-
-    if live_score is not None:
-        label = f"{result['liveness_status']} | Live: {live_score:.2f}"
-    else:
-        label = result["liveness_status"]
-
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-
-    cv2.putText(
-        frame,
-        label,
-        (x1, y1 - 10),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        color,
-        2
-    )
-
-    return frame
+from face_detection.deepface_auth import DeepFaceAuthenticator
 
 
 def run_deepface_authentication():
-    print("===== DeepFace Face Recognition + CNN Liveness Test =====")
-
     student_id = input("Enter student ID, example STU001: ").strip()
-    exam_id = input("Enter exam ID, example exam_001: ").strip()
 
-    if not student_id or not exam_id:
-        print("Error: student ID and exam ID are required.")
+    if not student_id:
+        print("Student ID is required.")
         return
 
-    try:
-        authenticator = DeepFaceAuthenticator(
-            student_id=student_id,
-            face_threshold=0.55
-        )
-    except Exception as error:
-        print(f"Error: {error}")
-        return
+    authenticator = DeepFaceAuthenticator(
+        student_id=student_id,
+        face_threshold=0.55,
+        enforce_detection=False
+    )
 
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
-        print("Error: Camera could not be opened.")
+        print("Camera could not be opened.")
         return
 
-    print("Authentication with CNN liveness started.")
-    print("Press 'q' to quit.")
-    print("Test with real face and then with a printed/mobile photo.")
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-    frame_count = 0
+    print("DeepFace Identity Test started.")
+    print("Press q = quit")
+    print("Press v = verify now")
+    print("The system also verifies automatically every 5 seconds.")
 
-    last_final_status = "Checking..."
-    last_identity_status = "Face not checked"
-    last_liveness_status = "Checking liveness"
+    last_verify_time = 0
+    verify_interval = 5
 
-    last_distance = None
-    last_threshold = None
-
-    last_live_score = None
-    last_spoof_score = None
-    last_raw_prediction = None
-
-    last_logged_status = ""
-    last_warning_time = 0
-    warning_cooldown = 10
-
-    verified_live_logged = False
+    latest_result = {
+        "status": "Face not checked",
+        "verified": False,
+        "distance": None,
+        "threshold": 0.55
+    }
 
     try:
         while True:
             ret, frame = cap.read()
 
             if not ret:
-                print("Error: Could not read frame.")
+                print("Could not read frame from camera.")
                 break
 
-            frame_count += 1
+            now = time.time()
 
-            # CNN liveness checks every frame.
-            # DeepFace recognition is heavy, so identity check runs every 60 frames.
-            # Also run once at the beginning.
-            run_identity_check = frame_count == 1 or frame_count % 60 == 0
+            should_verify = (now - last_verify_time) >= verify_interval
 
-            result = authenticator.verify_frame_with_liveness(
-                frame,
-                run_identity_check=run_identity_check
-            )
+            key = cv2.waitKey(1) & 0xFF
 
-            last_final_status = result["final_status"]
-            last_identity_status = result["identity_status"]
-            last_liveness_status = result["liveness_status"]
+            if key == ord("v"):
+                should_verify = True
 
-            last_distance = result["identity_distance"]
-            last_threshold = result["identity_threshold"]
+            if should_verify:
+                latest_result = authenticator.verify_frame(frame)
+                last_verify_time = now
 
-            last_live_score = result["live_score"]
-            last_spoof_score = result["spoof_score"]
-            last_raw_prediction = result["raw_prediction"]
+                print("--------------------------------")
+                print("Status:", latest_result.get("status"))
+                print("Verified:", latest_result.get("verified"))
+                print("Distance:", latest_result.get("distance"))
+                print("Threshold:", latest_result.get("threshold"))
 
-            if run_identity_check:
-                print(
-                    f"Final: {last_final_status} | "
-                    f"Face: {last_identity_status} | "
-                    f"Liveness: {last_liveness_status} | "
-                    f"Distance: {format_value(last_distance)} | "
-                    f"Threshold: {format_value(last_threshold)} | "
-                    f"Live Score: {format_value(last_live_score)} | "
-                    f"Spoof Score: {format_value(last_spoof_score)} | "
-                    f"Raw: {last_raw_prediction}"
-                )
+            status = latest_result.get("status", "Face not checked")
+            verified = latest_result.get("verified", False)
+            distance = latest_result.get("distance")
+            threshold = latest_result.get("threshold")
 
-            if result["final_verified"] and not verified_live_logged:
-                save_exam_log(
-                    exam_id,
-                    student_id,
-                    f"Verified live student using {MODEL_NAME} + {DETECTOR_BACKEND} + CNN Liveness"
-                )
-                verified_live_logged = True
-
-            current_time = time.time()
-
-            if result["warning"]:
-                if current_time - last_warning_time >= warning_cooldown:
-                    last_warning_time = current_time
-
-                    warning_message = (
-                        f"{last_final_status} | "
-                        f"Face: {last_identity_status} | "
-                        f"Liveness: {last_liveness_status} | "
-                        f"Distance: {format_value(last_distance)} | "
-                        f"Threshold: {format_value(last_threshold)} | "
-                        f"Live Score: {format_value(last_live_score)} | "
-                        f"Spoof Score: {format_value(last_spoof_score)} | "
-                        f"Raw: {last_raw_prediction}"
-                    )
-
-                    save_exam_log(
-                        exam_id,
-                        student_id,
-                        f"FACE_LIVENESS_WARNING: {warning_message}"
-                    )
-
-                    image_path = save_violation_screenshot(
-                        exam_id,
-                        student_id,
-                        frame,
-                        "face_liveness_warning"
-                    )
-
-                    save_exam_log(
-                        exam_id,
-                        student_id,
-                        f"Screenshot saved: {image_path}"
-                    )
-
-                    print("WARNING:", warning_message)
-
-            if last_final_status != last_logged_status:
-                save_exam_log(
-                    exam_id,
-                    student_id,
-                    f"Face security status changed: {last_final_status}"
-                )
-                last_logged_status = last_final_status
-
-            if result["final_verified"]:
-                final_color = (0, 255, 0)
-            elif "Unknown" in last_final_status or result["warning"]:
-                final_color = (0, 0, 255)
+            if verified:
+                color = (0, 255, 0)
             else:
-                final_color = (0, 255, 255)
+                color = (0, 0, 255)
 
-            face_color = (0, 255, 0) if result["identity_verified"] else (0, 0, 255)
-            live_color = (0, 255, 0) if result["is_live"] else (0, 0, 255)
+            if distance is None:
+                distance_text = "Dist: —"
+            else:
+                distance_text = f"Dist: {distance:.3f}"
 
-            frame = draw_liveness_box(frame, result)
+            text1 = f"Identity: {status}"
+            text2 = f"{distance_text} | Threshold: {threshold}"
 
             cv2.putText(
                 frame,
-                f"Final: {last_final_status}",
+                text1,
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                final_color,
-                2
+                0.75,
+                color,
+                2,
+                cv2.LINE_AA
             )
 
             cv2.putText(
                 frame,
-                f"Face: {last_identity_status}",
+                text2,
                 (20, 75),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.65,
-                face_color,
-                2
-            )
-
-            cv2.putText(
-                frame,
-                f"Liveness: {last_liveness_status}",
-                (20, 110),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                live_color,
-                2
-            )
-
-            cv2.putText(
-                frame,
-                f"Live Score: {format_value(last_live_score)} | Spoof Score: {format_value(last_spoof_score)}",
-                (20, 145),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
                 (255, 255, 255),
-                2
+                2,
+                cv2.LINE_AA
             )
 
-            cv2.putText(
-                frame,
-                f"Distance: {format_value(last_distance)} | Threshold: {format_value(last_threshold)}",
-                (20, 180),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (255, 255, 255),
-                2
-            )
+            cv2.imshow("DeepFace Identity Test", frame)
 
-            cv2.putText(
-                frame,
-                f"Model: {MODEL_NAME} | Detector: {DETECTOR_BACKEND}",
-                (20, 215),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (255, 255, 255),
-                2
-            )
-
-            if last_raw_prediction is not None:
-                raw_text = f"Raw: {last_raw_prediction}"
-                cv2.putText(
-                    frame,
-                    raw_text[:80],
-                    (20, 250),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55,
-                    (255, 255, 255),
-                    2
-                )
-
-            cv2.imshow("Face Recognition + CNN Liveness Test", frame)
-
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            if key == ord("q"):
                 break
 
     finally:
