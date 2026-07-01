@@ -319,7 +319,7 @@ class ProctoringSystem:
                 warning_seconds=3,
                 speech_ratio_threshold=0.60,
                 min_volume_threshold=0.015,
-                device=9
+                device=None
             )
 
             self.last_audio_status = "Audio system ready"
